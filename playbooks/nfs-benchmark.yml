@@ -1,0 +1,70 @@
+---
+# Benchmark NFS read/write speed from every cluster node.
+#
+# Usage:
+#   ansible-playbook playbooks/nfs-benchmark.yml \
+#     -e nfs_server=<NAS_IP> \
+#     -e nfs_path=<NAS_NFS_PATH> \
+#     --ask-pass --ask-become-pass
+
+- name: NFS benchmark
+  hosts: k3s_cluster
+  become: true
+  gather_facts: false
+
+  vars:
+    mount_point: /tmp/nfs-benchmark-{{ inventory_hostname }}
+    test_file: "{{ mount_point }}/benchmark.bin"
+    test_size_mb: 512
+
+  tasks:
+    - name: Create temp mount point
+      ansible.builtin.file:
+        path: "{{ mount_point }}"
+        state: directory
+        mode: "0755"
+
+    - name: Mount NFS share
+      ansible.builtin.command:
+        cmd: mount -t nfs -o rw,hard,rsize=131072,wsize=131072 {{ nfs_server }}:{{ nfs_path }} {{ mount_point }}
+      changed_when: true
+
+    - name: Run benchmark
+      block:
+        - name: Write test ({{ test_size_mb }} MB)
+          ansible.builtin.command:
+            cmd: dd if=/dev/zero of={{ test_file }} bs=1M count={{ test_size_mb }} conv=fdatasync
+          register: write_result
+          changed_when: true
+
+        - name: Drop page cache
+          ansible.builtin.shell: echo 3 > /proc/sys/vm/drop_caches
+          changed_when: true
+
+        - name: Read test ({{ test_size_mb }} MB)
+          ansible.builtin.command:
+            cmd: dd if={{ test_file }} of=/dev/null bs=1M
+          register: read_result
+          changed_when: false
+
+      always:
+        - name: Remove test file
+          ansible.builtin.file:
+            path: "{{ test_file }}"
+            state: absent
+
+        - name: Unmount NFS share
+          ansible.builtin.command:
+            cmd: umount {{ mount_point }}
+          changed_when: true
+
+        - name: Remove temp mount point
+          ansible.builtin.file:
+            path: "{{ mount_point }}"
+            state: absent
+
+    - name: "Results — {{ inventory_hostname }} ({{ ansible_host }})"
+      ansible.builtin.debug:
+        msg:
+          - "Write: {{ write_result.stderr_lines[-1] }}"
+          - "Read:  {{ read_result.stderr_lines[-1] }}"

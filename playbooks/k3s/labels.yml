@@ -19,14 +19,19 @@
     - name: Label server nodes
       ansible.builtin.command: >
         k3s kubectl label node {{ hostvars[item]['ansible_hostname'] }}
-        node-role.homelab/server=true --overwrite
+        node-role.homelab/server=true
+        node-role.homelab/worker=true
+        node-role.kubernetes.io/worker=true
+        --overwrite
       loop: "{{ groups['server'] }}"
       changed_when: true
 
     - name: Label agent nodes
       ansible.builtin.command: >
         k3s kubectl label node {{ hostvars[item]['ansible_hostname'] }}
-        node-role.homelab/worker=true --overwrite
+        node-role.homelab/worker=true
+        node-role.kubernetes.io/worker=true
+        --overwrite
       loop: "{{ groups['agent'] }}"
       changed_when: true
 
