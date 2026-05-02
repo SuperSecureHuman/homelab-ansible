@@ -1,0 +1,40 @@
+---
+# Apply homelab node role labels to all cluster nodes.
+# Labels are for visibility and optional nodeSelector targeting — no taints, no scheduling restrictions.
+# kubernetes.io/arch (amd64/arm64) is applied automatically by k3s.
+
+- name: Apply node role labels
+  hosts: node01
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Gather hostname from each cluster node
+      ansible.builtin.setup:
+        filter: ansible_hostname
+      delegate_to: "{{ item }}"
+      delegate_facts: true
+      loop: "{{ groups['server'] + groups['agent'] }}"
+
+    - name: Label server nodes
+      ansible.builtin.command: >
+        k3s kubectl label node {{ hostvars[item]['ansible_hostname'] }}
+        node-role.homelab/server=true --overwrite
+      loop: "{{ groups['server'] }}"
+      changed_when: true
+
+    - name: Label agent nodes
+      ansible.builtin.command: >
+        k3s kubectl label node {{ hostvars[item]['ansible_hostname'] }}
+        node-role.homelab/worker=true --overwrite
+      loop: "{{ groups['agent'] }}"
+      changed_when: true
+
+    - name: Show node list with roles
+      ansible.builtin.command: k3s kubectl get nodes -o wide
+      changed_when: false
+      register: node_list
+
+    - name: Node list
+      ansible.builtin.debug:
+        msg: "{{ node_list.stdout_lines }}"

@@ -10,3 +10,6 @@
 # --- Network validation ---
 - import_playbook: playbooks/network/health-check.yml
 - import_playbook: playbooks/network/iperf-matrix.yml
+
+# --- k3s cluster bootstrap ---
+- import_playbook: playbooks/k3s/site.yml

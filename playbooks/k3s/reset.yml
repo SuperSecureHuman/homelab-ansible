@@ -1,0 +1,10 @@
+---
+# Tear down the k3s cluster — runs k3s-uninstall.sh on servers
+# and k3s-agent-uninstall.sh on agents. Removes kubeconfig and data dirs.
+#
+# WARNING: This is destructive. All cluster state will be lost.
+#
+# Usage:
+#   ansible-playbook playbooks/k3s/reset.yml --ask-pass --ask-become-pass
+
+- import_playbook: ../../vendor/k3s-ansible/playbooks/reset.yml

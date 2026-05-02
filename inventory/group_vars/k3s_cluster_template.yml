@@ -1,0 +1,39 @@
+# k3s cluster configuration — read by k3s-ansible roles.
+# These vars apply to the k3s_cluster group (server + agent nodes).
+
+# k3s version — pin to a specific release for reproducibility.
+# Find latest: https://github.com/k3s-io/k3s/releases
+k3s_version: v1.31.3+k3s1
+
+# Shared cluster token — all nodes use this to authenticate.
+# Generate one: openssl rand -base64 64 | tr -d '\n'
+# Consider encrypting with: ansible-vault encrypt_string '<token>' --name token
+token: "REPLACE"
+
+# API endpoint — first server's IP. Other nodes use this to join the cluster.
+api_endpoint: "192.168.0.104"
+
+# Kubeconfig destination on your workstation (backed up if already present)
+kubeconfig: "~/.kube/config"
+
+# Context name written into the kubeconfig
+cluster_context: homelab
+
+# Extra args passed to every k3s server process:
+#   traefik  — disabled; NPM handles ingress externally (Chapter 05)
+#   servicelb — disabled; MetalLB handles LoadBalancer IPs (Chapter 03)
+extra_server_args: "--disable traefik --disable servicelb"
+
+# Written verbatim to /etc/rancher/k3s/config.yaml on each server node.
+# {{ ansible_host }} evaluates per-node, setting the correct node IP.
+server_config_yaml: |
+  node-ip: "{{ ansible_host }}"
+  tls-san:
+    - 192.168.0.104
+    - 192.168.0.105
+    - 192.168.0.202
+  flannel-backend: vxlan
+
+# Written verbatim to /etc/rancher/k3s/config.yaml on each agent node.
+agent_config_yaml: |
+  node-ip: "{{ ansible_host }}"

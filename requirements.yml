@@ -1,0 +1,8 @@
+---
+# Ansible collection dependencies required by k3s-ansible roles.
+# Install with: ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general
+    version: ">=7.0.0"
+  - name: ansible.posix
+    version: ">=1.5.0"
