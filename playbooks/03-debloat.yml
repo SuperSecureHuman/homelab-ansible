@@ -1,0 +1,35 @@
+---
+- name: Debloat cluster nodes
+  hosts: cluster
+  become: true
+
+  tasks:
+    - name: Remove ubuntu-report
+      ansible.builtin.apt:
+        name: ubuntu-report
+        state: absent
+        purge: true
+
+    - name: Disable ubuntu-report
+      ansible.builtin.command: ubuntu-report send no
+      failed_when: false
+      changed_when: false
+
+    - name: Remove apport (crash popup)
+      ansible.builtin.apt:
+        name:
+          - apport
+          - apport-gtk
+        state: absent
+        purge: true
+
+    - name: Disable motd terminal ads
+      ansible.builtin.replace:
+        path: /etc/default/motd-news
+        regexp: 'ENABLED=1'
+        replace: 'ENABLED=0'
+
+    - name: Autoremove leftover packages
+      ansible.builtin.apt:
+        autoremove: true
+        purge: true

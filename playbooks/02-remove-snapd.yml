@@ -1,0 +1,54 @@
+---
+- name: Remove and purge snapd
+  hosts: cluster
+  become: true
+
+  tasks:
+    - name: Remove all snaps iteratively until none remain
+      ansible.builtin.shell: |
+        while [ "$(snap list 2>/dev/null | wc -l)" -gt 0 ]; do
+          for snap in $(snap list 2>/dev/null | tail -n +2 | cut -d ' ' -f 1); do
+            snap remove --purge "$snap" 2>/dev/null || true
+          done
+        done
+      changed_when: true
+      ignore_errors: true
+
+    - name: Stop, disable, and mask snapd
+      ansible.builtin.systemd:
+        name: snapd
+        state: stopped
+        enabled: false
+        masked: true
+      ignore_errors: true
+
+    - name: Purge snapd package
+      ansible.builtin.apt:
+        name: snapd
+        state: absent
+        purge: true
+
+    - name: Remove snap directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: absent
+      loop:
+        - /snap
+        - /var/lib/snapd
+        - /root/snap
+
+    - name: Remove snap dirs from all user home directories
+      ansible.builtin.shell: |
+        for userpath in /home/*; do
+          rm -rf "$userpath/snap"
+        done
+      changed_when: true
+
+    - name: Pin snapd to prevent reinstall
+      ansible.builtin.copy:
+        dest: /etc/apt/preferences.d/nosnap.pref
+        content: |
+          Package: snapd
+          Pin: release a=*
+          Pin-Priority: -10
+        mode: '0644'
