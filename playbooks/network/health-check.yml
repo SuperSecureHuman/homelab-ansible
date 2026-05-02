@@ -1,0 +1,45 @@
+---
+- name: Install network tools
+  hosts: cluster
+  become: true
+  tasks:
+    - ansible.builtin.apt:
+        name:
+          - ethtool
+          - iputils-ping
+        state: present
+        update_cache: false
+
+- name: NIC speed and duplex info
+  hosts: cluster
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Get NIC settings via ethtool
+      ansible.builtin.command: ethtool {{ ansible_default_ipv4.interface }}
+      register: nic_raw
+      changed_when: false
+
+    - name: Show NIC summary
+      ansible.builtin.debug:
+        msg: |-
+          {{ inventory_hostname }} ({{ ansible_default_ipv4.interface }}):
+            {{ nic_raw.stdout | regex_findall('(?:Speed|Duplex|Auto-negotiation|Link detected).*') | join('\n    ') }}
+
+- name: Ping matrix — every node to every other node
+  hosts: cluster
+  gather_facts: false
+  tasks:
+    - name: Ping all other cluster nodes
+      ansible.builtin.shell: |
+        ping -c 5 -W 1 {{ hostvars[item]['ansible_host'] }} 2>&1 | tail -2
+      loop: "{{ groups['cluster'] | difference([inventory_hostname]) }}"
+      register: ping_results
+      changed_when: false
+      failed_when: false
+
+    - name: Print ping summary
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} → {{ item.item }}: {{ item.stdout_lines | last
+          }}"
+      loop: "{{ ping_results.results }}"

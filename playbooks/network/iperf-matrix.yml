@@ -1,0 +1,94 @@
+---
+- name: Install iperf3 on all cluster nodes
+  hosts: cluster
+  become: true
+  tasks:
+    - ansible.builtin.apt:
+        name: iperf3
+        state: present
+        update_cache: false
+
+# Each node takes a turn as server; all others connect to it in sequence.
+- name: iperf3 sequential matrix
+  hosts: cluster
+  serial: 1
+  become: true
+  gather_facts: false
+
+  tasks:
+    - name: Start iperf3 server on {{ inventory_hostname }}
+      ansible.builtin.shell: pkill iperf3 || true; sleep 0.5; iperf3 -s -D
+      changed_when: true
+
+    - name: Test from each client → {{ inventory_hostname }}
+      ansible.builtin.shell: |
+        iperf3 -c {{ hostvars[inventory_hostname]['ansible_host'] }} -t 5 2>&1 \
+          | grep -E "sender|receiver|error|connect" | tail -2
+      delegate_to: "{{ item }}"
+      loop: "{{ groups['cluster'] | difference([inventory_hostname]) }}"
+      register: iperf_results
+      failed_when: false
+
+    - name: Results (server = {{ inventory_hostname }})
+      ansible.builtin.debug:
+        msg: "{{ item.item }} → {{ inventory_hostname }}: {{ item.stdout_lines | join(' | ') }}"
+      loop: "{{ iperf_results.results }}"
+
+    - name: Stop iperf3 server on {{ inventory_hostname }}
+      ansible.builtin.shell: pkill iperf3 || true
+      changed_when: true
+
+# Non-blocking test: 3 simultaneous flows across 3 independent switch paths.
+# If switch is non-blocking each pair should sustain ~940 Mbps independently.
+# If flows share bandwidth (total ~940 Mbps), the switch is blocking/oversubscribed.
+- name: Non-blocking switch test — 3 simultaneous flows
+  hosts: node01
+  gather_facts: false
+
+  vars:
+    ansible_python_interpreter: /usr/bin/python3
+    pairs:
+      - server: node01
+        client: pi-node02
+      - server: node02
+        client: pi-node03
+      - server: pi-node01
+        client: pi-node04
+
+  tasks:
+    - name: Start iperf3 servers
+      ansible.builtin.shell: pkill iperf3 || true; sleep 0.5; iperf3 -s -D
+      delegate_to: "{{ item.server }}"
+      loop: "{{ pairs }}"
+
+    - name: Launch simultaneous iperf3 clients (10s, async)
+      ansible.builtin.shell: |
+        iperf3 -c {{ hostvars[item.server]['ansible_host'] }} -t 10 2>&1 \
+          | grep "sender" | tail -1
+      delegate_to: "{{ item.client }}"
+      loop: "{{ pairs }}"
+      async: 20
+      poll: 0
+      register: async_jobs
+
+    - name: Wait for all flows to finish
+      ansible.builtin.async_status:
+        jid: "{{ async_jobs.results[idx].ansible_job_id }}"
+      delegate_to: "{{ item.client }}"
+      loop: "{{ pairs }}"
+      loop_control:
+        index_var: idx
+      register: flow_results
+      until: flow_results.finished
+      retries: 10
+      delay: 3
+
+    - name: Non-blocking results
+      ansible.builtin.debug:
+        msg: "{{ item.item.client }} → {{ item.item.server }}: {{ item.stdout | default('no output') }}"
+      loop: "{{ flow_results.results }}"
+
+    - name: Stop all iperf3 servers
+      ansible.builtin.shell: pkill iperf3 || true
+      delegate_to: "{{ item.server }}"
+      loop: "{{ pairs }}"

@@ -1,0 +1,12 @@
+---
+# Full site run — executes all playbooks in order.
+# Run individual groups with: ansible-playbook playbooks/system/upgrade-update.yml
+
+# --- System maintenance ---
+- import_playbook: playbooks/system/upgrade-update.yml
+- import_playbook: playbooks/system/remove-snapd.yml
+- import_playbook: playbooks/system/debloat.yml
+
+# --- Network validation ---
+- import_playbook: playbooks/network/health-check.yml
+- import_playbook: playbooks/network/iperf-matrix.yml
