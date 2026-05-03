@@ -3,3 +3,4 @@ vault_pass.txt
 .vault_pass
 *.log
 k3s_cluster.yml
+playbooks/pihole-ha/.env

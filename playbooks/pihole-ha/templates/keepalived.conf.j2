@@ -1,0 +1,64 @@
+{% set node_ip = ansible_default_ipv4.address %}
+{% set v1_pri = vip_priorities[node_ip].vip1 %}
+{% set v2_pri = vip_priorities[node_ip].vip2 %}
+global_defs {
+  enable_script_security
+  script_user root
+}
+
+vrrp_script check_pihole {
+  script "/check_pihole.sh"
+  interval 2
+  fall 2
+  rise 2
+}
+
+vrrp_instance DNS_VIP1 {
+  state {{ 'MASTER' if v1_pri == 150 else 'BACKUP' }}
+  interface {{ default_iface.stdout }}
+  virtual_router_id 51
+  priority {{ v1_pri }}
+  advert_int 1
+  preempt_delay 30
+  authentication {
+    auth_type PASS
+    auth_pass pihole1
+  }
+  virtual_ipaddress {
+    192.168.0.251/24 dev {{ default_iface.stdout }}
+  }
+  track_script {
+    check_pihole
+  }
+  unicast_src_ip {{ node_ip }}
+  unicast_peer {
+{% for ip in all_node_ips if ip != node_ip %}
+    {{ ip }}
+{% endfor %}
+  }
+}
+
+vrrp_instance DNS_VIP2 {
+  state {{ 'MASTER' if v2_pri == 150 else 'BACKUP' }}
+  interface {{ default_iface.stdout }}
+  virtual_router_id 52
+  priority {{ v2_pri }}
+  advert_int 1
+  preempt_delay 30
+  authentication {
+    auth_type PASS
+    auth_pass pihole2
+  }
+  virtual_ipaddress {
+    192.168.0.252/24 dev {{ default_iface.stdout }}
+  }
+  track_script {
+    check_pihole
+  }
+  unicast_src_ip {{ node_ip }}
+  unicast_peer {
+{% for ip in all_node_ips if ip != node_ip %}
+    {{ ip }}
+{% endfor %}
+  }
+}

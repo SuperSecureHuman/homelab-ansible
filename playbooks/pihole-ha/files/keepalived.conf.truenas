@@ -1,0 +1,67 @@
+global_defs {
+  enable_script_security
+  script_user root
+}
+
+vrrp_script check_pihole {
+  script "/check_pihole.sh"
+  interval 2
+  fall 2
+  rise 2
+}
+
+vrrp_instance DNS_VIP1 {
+  state MASTER
+  interface enp1s0
+  virtual_router_id 51
+  priority 160
+  advert_int 1
+  preempt_delay 30
+  authentication {
+    auth_type PASS
+    auth_pass pihole1
+  }
+  virtual_ipaddress {
+    192.168.0.251/24 dev enp1s0
+  }
+  track_script {
+    check_pihole
+  }
+  unicast_src_ip 192.168.0.180
+  unicast_peer {
+    192.168.0.104
+    192.168.0.105
+    192.168.0.202
+    192.168.0.201
+    192.168.0.203
+    192.168.0.204
+  }
+}
+
+vrrp_instance DNS_VIP2 {
+  state BACKUP
+  interface enp1s0
+  virtual_router_id 52
+  priority 90
+  advert_int 1
+  preempt_delay 30
+  authentication {
+    auth_type PASS
+    auth_pass pihole2
+  }
+  virtual_ipaddress {
+    192.168.0.252/24 dev enp1s0
+  }
+  track_script {
+    check_pihole
+  }
+  unicast_src_ip 192.168.0.180
+  unicast_peer {
+    192.168.0.104
+    192.168.0.105
+    192.168.0.202
+    192.168.0.201
+    192.168.0.203
+    192.168.0.204
+  }
+}

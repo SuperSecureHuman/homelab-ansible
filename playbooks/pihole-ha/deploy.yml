@@ -1,0 +1,76 @@
+---
+- name: Deploy Pi-hole HA
+  hosts: cluster
+  become: true
+  vars_files:
+    - .env
+  vars:
+    pihole_dir: /opt/pihole-ha
+    all_node_ips:
+      - "192.168.0.180"  # truenas — manual deploy via Portainer
+      - "192.168.0.104"
+      - "192.168.0.105"
+      - "192.168.0.202"
+      - "192.168.0.201"
+      - "192.168.0.203"
+      - "192.168.0.204"
+    vip_priorities:
+      "192.168.0.180": { vip1: 160, vip2: 90 }  # master for VIP1 only
+      "192.168.0.104": { vip1: 150, vip2: 140 }
+      "192.168.0.105": { vip1: 140, vip2: 150 }
+      "192.168.0.202": { vip1: 130, vip2: 130 }
+      "192.168.0.201": { vip1: 120, vip2: 120 }
+      "192.168.0.203": { vip1: 110, vip2: 110 }
+      "192.168.0.204": { vip1: 100, vip2: 100 }
+
+  tasks:
+    - name: Create directory structure
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ pihole_dir }}"
+        - "{{ pihole_dir }}/keepalived"
+        - "{{ pihole_dir }}/unbound"
+        - "{{ pihole_dir }}/data/pihole"
+
+    - name: Get default network interface
+      ansible.builtin.shell: ip route | grep default | awk '{print $5}' | head -1
+      register: default_iface
+      changed_when: false
+
+    - name: Copy docker-compose.yml
+      ansible.builtin.copy:
+        src: docker-compose.yml
+        dest: "{{ pihole_dir }}/docker-compose.yml"
+        mode: "0644"
+
+    - name: Copy unbound.conf
+      ansible.builtin.copy:
+        src: unbound.conf
+        dest: "{{ pihole_dir }}/unbound/unbound.conf"
+        mode: "0644"
+
+    - name: Copy keepalived health check script
+      ansible.builtin.copy:
+        src: check_pihole.sh
+        dest: "{{ pihole_dir }}/keepalived/check_pihole.sh"
+        mode: "0755"
+
+    - name: Template node .env
+      ansible.builtin.template:
+        src: node.env.j2
+        dest: "{{ pihole_dir }}/.env"
+        mode: "0600"
+
+    - name: Template keepalived.conf
+      ansible.builtin.template:
+        src: keepalived.conf.j2
+        dest: "{{ pihole_dir }}/keepalived/keepalived.conf"
+        mode: "0644"
+
+    - name: Start stack
+      ansible.builtin.shell:
+        cmd: docker compose up -d
+        chdir: "{{ pihole_dir }}"

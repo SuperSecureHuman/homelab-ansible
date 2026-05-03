@@ -1,0 +1,106 @@
+---
+- name: Pi-hole HA preflight
+  hosts: cluster
+  become: true
+
+  tasks:
+    - name: Disable systemd-resolved
+      ansible.builtin.systemd:
+        name: systemd-resolved
+        state: stopped
+        enabled: false
+      failed_when: false
+
+    - name: Set static resolv.conf
+      ansible.builtin.copy:
+        dest: /etc/resolv.conf
+        content: "nameserver 1.1.1.1\nnameserver 9.9.9.9\n"
+        force: true
+
+    - name: Check if docker is installed
+      ansible.builtin.command: which docker
+      register: docker_check
+      changed_when: false
+      failed_when: false
+
+    - name: Install docker
+      ansible.builtin.shell: curl -fsSL https://get.docker.com | sh
+      when: docker_check.rc != 0
+
+    - name: Check port 53 is free (TCP)
+      ansible.builtin.shell: ss -tlnp | grep -E ':53\s'
+      register: port53_tcp
+      changed_when: false
+      failed_when: false
+
+    - name: Check port 53 is free (UDP)
+      ansible.builtin.shell: ss -ulnp | grep -E ':53\s'
+      register: port53_udp
+      changed_when: false
+      failed_when: false
+
+    - name: Assert port 53 is free
+      ansible.builtin.assert:
+        that:
+          - port53_tcp.rc != 0
+          - port53_udp.rc != 0
+        fail_msg: "Port 53 is in use on {{ inventory_hostname }} — check: {{ port53_tcp.stdout }} {{ port53_udp.stdout }}"
+        success_msg: "Port 53 is free on {{ inventory_hostname }}"
+
+    - name: Check port 5335 is free
+      ansible.builtin.shell: ss -lnp | grep -E ':5335\s'
+      register: port5335
+      changed_when: false
+      failed_when: false
+
+    - name: Assert port 5335 is free
+      ansible.builtin.assert:
+        that: port5335.rc != 0
+        fail_msg: "Port 5335 (Unbound) is in use on {{ inventory_hostname }}"
+        success_msg: "Port 5335 is free on {{ inventory_hostname }}"
+
+    - name: Check port 25080 is free
+      ansible.builtin.shell: ss -tlnp | grep -E ':25080\s'
+      register: port25080
+      changed_when: false
+      failed_when: false
+
+    - name: Assert port 25080 is free
+      ansible.builtin.assert:
+        that: port25080.rc != 0
+        fail_msg: "Port 25080 (Pi-hole web) is in use on {{ inventory_hostname }}"
+        success_msg: "Port 25080 is free on {{ inventory_hostname }}"
+
+    - name: Check VIPs are not already in use
+      ansible.builtin.command: ping -c 1 -W 1 {{ item }}
+      register: vip_ping
+      changed_when: false
+      failed_when: false
+      loop:
+        - "192.168.0.251"
+        - "192.168.0.252"
+      run_once: true
+      delegate_to: localhost
+
+    - name: Warn if VIPs respond (already in use)
+      ansible.builtin.debug:
+        msg: "WARNING: {{ item.item }} responds to ping — make sure it's not claimed by another host before deploying"
+      when: item.rc == 0
+      loop: "{{ vip_ping.results }}"
+      run_once: true
+
+    - name: Check internet connectivity
+      ansible.builtin.command: ping -c 1 -W 3 8.8.8.8
+      register: inet_check
+      changed_when: false
+      failed_when: false
+
+    - name: Assert internet connectivity
+      ansible.builtin.assert:
+        that: inet_check.rc == 0
+        fail_msg: "No internet on {{ inventory_hostname }} — docker image pull will fail"
+        success_msg: "Internet OK on {{ inventory_hostname }}"
+
+    - name: Preflight complete
+      ansible.builtin.debug:
+        msg: "All preflight checks passed on {{ inventory_hostname }} — run deploy.yml next"
