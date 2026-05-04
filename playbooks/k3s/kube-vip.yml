@@ -1,0 +1,160 @@
+---
+# Deploy kube-vip for control plane HA on the 3 server nodes.
+#
+# kube-vip advertises VIP 192.168.0.10 via ARP. One server holds it at a time;
+# leader election via k8s Leases handles failover in seconds.
+#
+# Uses one DaemonSet per server node (nodeSelector: kubernetes.io/hostname)
+# so each node gets its own interface hardcoded. All three DaemonSets share
+# the same ServiceAccount and compete for the same plndr-cp-lock Lease.
+#
+# Prerequisites:
+#   - k3s already running on all server nodes
+#   - tls-san updated in group_vars/k3s_cluster.yml (192.168.0.10 added)
+#   - api_endpoint updated in group_vars/k3s_cluster.yml to 192.168.0.10
+#
+# Run:
+#   ansible-playbook playbooks/k3s/kube-vip.yml --ask-pass --ask-become-pass --forks 1
+#   --forks 1 ensures servers restart one at a time (no simultaneous API downtime)
+
+# ── 1. Update k3s server config (adds VIP to tls-san) ────────────────────────
+
+- name: Update k3s server config with VIP in tls-san
+  hosts: server
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Write k3s server config
+      ansible.builtin.copy:
+        content: "{{ server_config_yaml }}"
+        dest: /etc/rancher/k3s/config.yaml
+        owner: root
+        group: root
+        mode: "0644"
+      register: k3s_config_result
+
+    - name: Restart k3s to apply new tls-san
+      ansible.builtin.systemd:
+        name: k3s
+        state: restarted
+      when: k3s_config_result.changed
+
+    - name: Wait for k3s API to be ready on this node
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 6443
+        timeout: 120
+
+# ── 2. Clean up static pod files from previous attempts ──────────────────────
+
+- name: Remove kube-vip static pod manifests
+  hosts: server
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Remove static pod file if present
+      ansible.builtin.file:
+        path: /var/lib/rancher/k3s/agent/pod-manifests/kube-vip.yaml
+        state: absent
+
+# ── 3. Apply kube-vip RBAC ────────────────────────────────────────────────────
+
+- name: Apply kube-vip RBAC
+  hosts: server
+  become: true
+  gather_facts: false
+  run_once: true
+  tasks:
+    - name: Apply kube-vip ClusterRole and ServiceAccount
+      ansible.builtin.command:
+        cmd: k3s kubectl apply -f https://kube-vip.io/manifests/rbac.yaml
+      changed_when: true
+
+# ── 4. Deploy per-node DaemonSets ─────────────────────────────────────────────
+# Each server node gets its own DaemonSet with nodeSelector + correct interface.
+# All three pods compete for the same plndr-cp-lock Lease.
+
+- name: Deploy kube-vip DaemonSet per server node
+  hosts: server
+  become: true
+  gather_facts: true
+  vars:
+    kube_vip_version: v1.1.2
+    kube_vip_vip: "192.168.0.10"
+    kube_vip_interface: "{{ ansible_facts['default_ipv4']['interface'] }}"
+  tasks:
+    - name: Show interface detected per node
+      ansible.builtin.debug:
+        msg: "{{ inventory_hostname }} ({{ ansible_facts['architecture'] }}) → {{ kube_vip_interface }}"
+
+    - name: Apply kube-vip DaemonSet for {{ inventory_hostname }}
+      ansible.builtin.shell:
+        cmd: k3s kubectl apply -f -
+        stdin: "{{ lookup('template', 'templates/kube-vip-daemonset.yaml.j2') }}"
+      changed_when: true
+      delegate_to: "{{ groups['server'][0] }}"
+
+# ── 5. Wait for kube-vip pods ────────────────────────────────────────────────
+
+- name: Wait for kube-vip pods to be Running
+  hosts: server
+  become: true
+  gather_facts: true
+  run_once: true
+  tasks:
+    - name: Wait for all kube-vip pods to be Running
+      ansible.builtin.shell:
+        cmd: >
+          k3s kubectl get pods -n kube-system -l app.kubernetes.io/name=kube-vip
+          --field-selector=status.phase=Running --no-headers 2>/dev/null | wc -l
+      register: running_pods
+      until: running_pods.stdout | int >= 3
+      retries: 18
+      delay: 10
+      changed_when: false
+      when: not ansible_check_mode
+
+# ── 6. Update local kubeconfig to use VIP ─────────────────────────────────────
+
+- name: Switch kubeconfig to use VIP
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Replace old API endpoint with VIP in kubeconfig
+      ansible.builtin.replace:
+        path: "{{ lookup('env', 'HOME') }}/.kube/config"
+        regexp: 'https://192\.168\.0\.104:6443'
+        replace: 'https://192.168.0.10:6443'
+
+    - name: Verify VIP is reachable on port 6443
+      ansible.builtin.wait_for:
+        host: 192.168.0.10
+        port: 6443
+        timeout: 30
+        msg: "VIP 192.168.0.10:6443 not reachable after kubeconfig switch"
+
+# ── 7. Update k3s agent config to use VIP ────────────────────────────────────
+
+- name: Update k3s agent nodes to connect via VIP
+  hosts: agent
+  become: true
+  gather_facts: false
+  tasks:
+    - name: Update server endpoint in k3s agent config
+      ansible.builtin.replace:
+        path: /etc/rancher/k3s/config.yaml
+        regexp: 'server:.*'
+        replace: 'server: https://192.168.0.10:6443'
+      register: agent_config_result
+
+    - name: Restart k3s-agent to apply new endpoint
+      ansible.builtin.systemd:
+        name: k3s-agent
+        state: restarted
+      when: agent_config_result.changed
+
+    - name: Wait for agent to reconnect
+      ansible.builtin.wait_for:
+        host: "{{ ansible_host }}"
+        port: 10250
+        timeout: 60

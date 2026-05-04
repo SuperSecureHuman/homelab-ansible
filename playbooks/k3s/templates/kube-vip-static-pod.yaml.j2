@@ -1,0 +1,65 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: kube-vip
+  namespace: kube-system
+spec:
+  containers:
+    - name: kube-vip
+      image: ghcr.io/kube-vip/kube-vip:{{ kube_vip_version }}
+      imagePullPolicy: IfNotPresent
+      args:
+        - manager
+        - --k8sConfigPath
+        - /etc/kubernetes/admin.conf
+      env:
+        - name: vip_arp
+          value: "true"
+        - name: port
+          value: "6443"
+        - name: vip_interface
+          value: "{{ kube_vip_interface }}"
+        - name: vip_subnet
+          value: "32"
+        - name: cp_enable
+          value: "true"
+        - name: cp_namespace
+          value: kube-system
+        - name: svc_enable
+          value: "false"
+        - name: vip_leaderelection
+          value: "true"
+        - name: vip_leasename
+          value: plndr-cp-lock
+        - name: vip_leaseduration
+          value: "15"
+        - name: vip_renewdeadline
+          value: "10"
+        - name: vip_retryperiod
+          value: "2"
+        - name: address
+          value: "{{ kube_vip_vip }}"
+        - name: prometheus_server
+          value: :2112
+      volumeMounts:
+        - name: kubeconfig
+          mountPath: /etc/kubernetes/admin.conf
+          readOnly: true
+      securityContext:
+        capabilities:
+          add:
+            - NET_ADMIN
+            - NET_RAW
+          drop:
+            - ALL
+  volumes:
+    - name: kubeconfig
+      hostPath:
+        path: /etc/rancher/k3s/k3s.yaml
+        type: File
+  hostNetwork: true
+  tolerations:
+    - effect: NoSchedule
+      operator: Exists
+    - effect: NoExecute
+      operator: Exists
